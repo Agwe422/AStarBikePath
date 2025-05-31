@@ -1,25 +1,24 @@
 import osmnx as ox
-import networkx as nx
 import math
 import matplotlib.pyplot as plt
 
 # Optional: configure logging & cache
 # ox.config(log_console=True, use_cache=True)
 
-# 1. Download a bikeable-street network for a place by name and project it to meters
+# 1. Download a bikeable-street network and project it to meters
 G = ox.graph_from_place("San Luis Obispo, California, USA", network_type="bike")
 G = ox.project_graph(G)
 
-# 2. Add elevation data and calculate grades
-# You can switch to add_node_elevations_raster if you have local DEM files.
-G = ox.elevation.add_node_elevations_google(G, api_key=None, pause=1)
-G = ox.elevation.add_edge_grades(G, add_absolute=True)
+# 2. (Elevation is skipped because no API key; grades will default to 0)
+#    If you later add elevation data, you can uncomment:
+# G = ox.elevation.add_node_elevations_google(G, api_key="YOUR_KEY_HERE", pause=1)
+# G = ox.elevation.add_edge_grades(G, add_absolute=True)
 
 # 3. Add edge speeds and travel times
 G = ox.routing.add_edge_speeds(G)
 G = ox.routing.add_edge_travel_times(G)
 
-# 4. Define custom cost weights (tweak these)
+# 4. Define custom cost weights (tweak as needed)
 W = {
     "protected_track": 0.5,
     "lane":            0.8,
@@ -32,8 +31,9 @@ W = {
     "stop":            0.5,
 }
 
+
 def edge_cost(u, v, data):
-    """Compute custom cost for edge_u->v based on length, cycleway, grade, speed, surface, and controls."""
+    """Compute custom cost for edge (u->v) based on length, cycleway, grade, speed, surface, and controls."""
     length = data.get("length", 0)
 
     # cycleway type penalty
@@ -47,7 +47,7 @@ def edge_cost(u, v, data):
     else:
         c_pen = W["no_cycleway"]
 
-    # grade penalty (positive only)
+    # grade penalty (will be zero since no grades added)
     grade = max(data.get("grade", 0), 0)
     g_pen = W["grade"] * grade
 
@@ -68,24 +68,54 @@ def edge_cost(u, v, data):
     stops = int(G.nodes[u].get("highway") == "stop") + int(G.nodes[v].get("highway") == "stop")
     ctrl_pen = W["signal"] * sigs + W["stop"] * stops
 
-    # total cost
     return length * (c_pen + g_pen + s_pen + surf_pen) + ctrl_pen
 
-def euclidean_heuristic(u, v):
-    """Straight-line distance heuristic in projected CRS."""
-    x1, y1 = G.nodes[u]["x"], G.nodes[u]["y"]
-    x2, y2 = G.nodes[v]["x"], G.nodes[v]["y"]
-    return math.hypot(x2 - x1, y2 - y1)
+# 5. Geocode origin and destination, convert to GeoDataFrames
+orig_address = "790 Foothill Blvd, San Luis Obispo, CA 93405"
+dest_address = "1210 Higuera St, San Luis Obispo, CA 93401"
+orig_gdf = ox.geocode_to_gdf(orig_address)
+dest_gdf = ox.geocode_to_gdf(dest_address)
 
-# 5. Geocode origin and destination, find nearest nodes
-orig_point = ox.geocode("790 Foothill Blvd, San Luis Obispo, CA 93405")
-dest_point = ox.geocode("1210 Higuera St, San Luis Obispo, CA 93401")
-orig_node = ox.nearest_nodes(G, orig_point[1], orig_point[0])
-dest_node = ox.nearest_nodes(G, dest_point[1], dest_point[0])
+# Project those GeoDataFrames to the same CRS as G
+orig_proj = ox.projection.project_gdf(orig_gdf, to_crs=G.graph["crs"])
+dest_proj = ox.projection.project_gdf(dest_gdf, to_crs=G.graph["crs"])
 
-# 6. Compute A* route
-route = nx.astar_path(G, orig_node, dest_node, heuristic=euclidean_heuristic, weight=edge_cost)
+# If the geometry is a polygon, use its centroid; otherwise, use the point directly
+orig_geom = orig_proj.geometry.iloc[0]
+orig_centroid = orig_geom.centroid if orig_geom.geom_type != "Point" else orig_geom
+ox_x, ox_y = orig_centroid.x, orig_centroid.y
 
-# 7. Plot the custom A* bike route
-fig, ax = ox.plot_graph_route(G, route, route_linewidth=4, node_size=0, bgcolor='white')
+dest_geom = dest_proj.geometry.iloc[0]
+dest_centroid = dest_geom.centroid if dest_geom.geom_type != "Point" else dest_geom
+dx_x, dx_y = dest_centroid.x, dest_centroid.y
+
+# Find nearest nodes
+orig_node = ox.distance.nearest_nodes(G, ox_x, ox_y)
+dest_node = ox.distance.nearest_nodes(G, dx_x, dx_y)
+
+# 6. Compute shortest path by length using OSMnx’s built‑in function
+route = ox.shortest_path(G, orig_node, dest_node, weight="length")
+
+# 7. Plot the custom A* bike route and zoom to bounding box
+fig, ax = ox.plot_graph_route(
+    G, route,
+    route_linewidth=4, node_size=0, bgcolor="white",
+    show=True  # draw later after setting limits
+)
+
+# Plot origin and destination points
+ax.scatter([ox_x], [ox_y], c="red", s=100, label="Origin")
+ax.scatter([dx_x], [dx_y], c="blue", s=100, label="Destination")
+ax.legend()
+
+# Compute bounding box around route nodes, with a 50-meter buffer
+xs = [G.nodes[n]["x"] for n in route]
+ys = [G.nodes[n]["y"] for n in route]
+buffer = 50
+xmin, xmax = min(xs) - buffer, max(xs) + buffer
+ymin, ymax = min(ys) - buffer, max(ys) + buffer
+
+ax.set_xlim(xmin, xmax)
+ax.set_ylim(ymin, ymax)
+
 plt.show()
