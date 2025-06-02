@@ -33,7 +33,7 @@ class MyApp(App):
         root = FloatLayout()
 
         # Background image
-        bg_image = Image(source='slo.jpg',
+        bg_image = Image(source='slo.jpeg',
                          allow_stretch=True,
                          keep_ratio=False,
                          size_hint=(1, 1),
