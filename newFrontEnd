@@ -33,14 +33,14 @@ class MyApp(App):
         root = FloatLayout()
 
         # Background image
-        bg_image = Image(source='slo.jpeg',
+        bg_image = Image(source='slo.jpg',
                          allow_stretch=True,
                          keep_ratio=False,
                          size_hint=(1, 1),
                          pos_hint={'x': 0, 'y': 0})
         root.add_widget(bg_image)
 
-        # Top label with black background
+        # Top label
         top_label = Label(
             text="A* For Biking",
             size_hint=(1, None),
@@ -80,9 +80,24 @@ class MyApp(App):
                                    size_hint_x=0.3,
                                    halign='right',
                                    valign='middle',
-                                   color=(0,0,0,1),
+                                   color=(0, 0, 0, 1),
                                    font_size=30)
             priority_label.bind(size=lambda instance, value: setattr(instance, 'text_size', value))
+
+            # White background behind label
+            with priority_label.canvas.before:
+                Color(1, 1, 1, 0.8)
+                bg_rect = Rectangle()
+
+            def make_update_rect(rect):
+                def update(instance, value):
+                    # Shift the x position right by 20 pixels, and reduce width by 20
+                    rect.pos = (instance.pos[0] + 570, instance.pos[1])
+                    rect.size = (instance.size[0] - 570, instance.size[1])
+
+                return update
+
+            priority_label.bind(pos=make_update_rect(bg_rect), size=make_update_rect(bg_rect))
 
             spinner = Spinner(
                 text="Select",
@@ -150,35 +165,36 @@ class MyApp(App):
         from_address = self.top_text_input.text
         to_address = self.text_input.text
 
-        # Reset priorities
-        priority_time = priority_distance = priority_bike_path = None
-        priority_protected_bike_path = priority_minimize_slope = None
+        print("From:", from_address)
+        print("To:", to_address)
+        print("Selected priorities in order:")
+        for i, choice in enumerate(self.selected, 1):
+            print(f"Priority {i}: {choice}")
 
-        # Assign priorities based on order (1 to 5)
-        for index, value in enumerate(self.selected):
-            priority = index + 1
-            if value == "Time":
-                priority_time = priority
-            elif value == "Distance":
-                priority_distance = priority
-            elif value == "Find Bike Lane":
-                priority_bike_path = priority
-            elif value == "Find Protected Bike Lane":
-                priority_protected_bike_path = priority
-            elif value == "Minimize Slope":
-                priority_minimize_slope = priority
+        priority_map = {
+            "Time": None,
+            "Distance": None,
+            "Find Bike Lane": None,
+            "Find Protected Bike Lane": None,
+            "Minimize Slope": None
+        }
 
-        # Debug printout
-        print(f"From: {from_address}")
-        print(f"To: {to_address}")
-        print(f"Time Priority: {priority_time}")
-        print(f"Distance Priority: {priority_distance}")
-        print(f"Bike Lane Priority: {priority_bike_path}")
-        print(f"Protected Bike Lane Priority: {priority_protected_bike_path}")
-        print(f"Slope Priority: {priority_minimize_slope}")
+        for index, choice in enumerate(self.selected):
+            if choice:
+                priority_map[choice] = index + 1  # Priority level 1-5
 
-        # Optional: Show destination in button
-        instance.text = self.text_input.text
+        priority_time = priority_map["Time"]
+        priority_distance = priority_map["Distance"]
+        priority_bike_path = priority_map["Find Bike Lane"]
+        priority_protected_bike_path = priority_map["Find Protected Bike Lane"]
+        priority_minimize_slope = priority_map["Minimize Slope"]
+
+        print("\nMapped Priorities:")
+        print("Time:", priority_time)
+        print("Distance:", priority_distance)
+        print("Bike Lane:", priority_bike_path)
+        print("Protected Bike Lane:", priority_protected_bike_path)
+        print("Minimize Slope:", priority_minimize_slope)
 
 
 if __name__ == '__main__':
