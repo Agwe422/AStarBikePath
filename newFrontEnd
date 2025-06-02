@@ -1,0 +1,185 @@
+from kivy.app import App
+from kivy.uix.spinner import Spinner
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.button import Button
+from kivy.uix.textinput import TextInput
+from kivy.uix.image import Image
+from kivy.uix.floatlayout import FloatLayout
+from kivy.graphics import Color, Rectangle
+
+# Global variables
+from_address = ""
+to_address = ""
+priority_time = None
+priority_distance = None
+priority_bike_path = None
+priority_protected_bike_path = None
+priority_minimize_slope = None
+
+class MyApp(App):
+    def build(self):
+        self.options = [
+            "Time",
+            "Distance",
+            "Find Bike Lane",
+            "Find Protected Bike Lane",
+            "Minimize Slope"
+        ]
+
+        self.selected = [None] * 5
+        self.spinners = []
+
+        root = FloatLayout()
+
+        # Background image
+        bg_image = Image(source='slo.jpg',
+                         allow_stretch=True,
+                         keep_ratio=False,
+                         size_hint=(1, 1),
+                         pos_hint={'x': 0, 'y': 0})
+        root.add_widget(bg_image)
+
+        # Top label with black background
+        top_label = Label(
+            text="A* For Biking",
+            size_hint=(1, None),
+            height=50,
+            pos_hint={'top': 1},
+            color=(1, 1, 1, 1),
+            bold=True,
+            font_size='20sp',
+        )
+
+        with top_label.canvas.before:
+            Color(0, 0, 0, 0.7)
+            self.rect = Rectangle(size=top_label.size, pos=top_label.pos)
+
+        def update_rect(instance, value):
+            self.rect.pos = instance.pos
+            self.rect.size = instance.size
+
+        top_label.bind(pos=update_rect, size=update_rect)
+        root.add_widget(top_label)
+
+        # Main layout
+        main_layout = BoxLayout(orientation='vertical',
+                                spacing=10,
+                                padding=(20, 80, 20, 20),
+                                size_hint=(1, 1),
+                                pos_hint={'x': 0, 'y': 0})
+        root.add_widget(main_layout)
+
+        for i in range(5):
+            row = BoxLayout(orientation='horizontal',
+                            size_hint_y=None,
+                            height=40,
+                            spacing=10)
+
+            priority_label = Label(text=f"Priority {i+1}",
+                                   size_hint_x=0.3,
+                                   halign='right',
+                                   valign='middle',
+                                   color=(0,0,0,1),
+                                   font_size=30)
+            priority_label.bind(size=lambda instance, value: setattr(instance, 'text_size', value))
+
+            spinner = Spinner(
+                text="Select",
+                values=self.options[:],
+                size_hint_x=0.2
+            )
+            spinner.index = i
+            spinner.bind(text=self.on_spinner_select)
+            self.spinners.append(spinner)
+
+            row.add_widget(priority_label)
+            row.add_widget(spinner)
+            main_layout.add_widget(row)
+
+        self.top_text_input = TextInput(
+            size_hint_y=None,
+            height=50,
+            multiline=False,
+            hint_text="ENTER STARTING POINT RIGHT HERE"
+        )
+        main_layout.add_widget(self.top_text_input)
+
+        self.text_input = TextInput(
+            size_hint_y=None,
+            height=50,
+            multiline=False,
+            hint_text="ENTER DESTINATION RIGHT HERE"
+        )
+        main_layout.add_widget(self.text_input)
+
+        self.button = Button(
+            text="Route",
+            size_hint_y=None,
+            height=50
+        )
+        self.button.bind(on_press=self.on_button_press)
+        main_layout.add_widget(self.button)
+
+        return root
+
+    def on_spinner_select(self, spinner, text):
+        index = spinner.index
+        self.selected[index] = text if text != "Select" else None
+        self.refresh_spinner_values()
+
+    def refresh_spinner_values(self):
+        used = set(sel for sel in self.selected if sel)
+
+        for i, spinner in enumerate(self.spinners):
+            current = self.selected[i]
+            available = [opt for opt in self.options if opt not in used or opt == current]
+            spinner.values = available
+
+            if current not in available:
+                self.selected[i] = None
+                spinner.text = "Select"
+            elif current:
+                spinner.text = current
+
+    def on_button_press(self, instance):
+        global from_address, to_address
+        global priority_time, priority_distance, priority_bike_path
+        global priority_protected_bike_path, priority_minimize_slope
+
+        from_address = self.top_text_input.text
+        to_address = self.text_input.text
+
+        # Reset priorities
+        priority_time = priority_distance = priority_bike_path = None
+        priority_protected_bike_path = priority_minimize_slope = None
+
+        # Assign priorities based on order (1 to 5)
+        for index, value in enumerate(self.selected):
+            priority = index + 1
+            if value == "Time":
+                priority_time = priority
+            elif value == "Distance":
+                priority_distance = priority
+            elif value == "Find Bike Lane":
+                priority_bike_path = priority
+            elif value == "Find Protected Bike Lane":
+                priority_protected_bike_path = priority
+            elif value == "Minimize Slope":
+                priority_minimize_slope = priority
+
+        # Debug printout
+        print(f"From: {from_address}")
+        print(f"To: {to_address}")
+        print(f"Time Priority: {priority_time}")
+        print(f"Distance Priority: {priority_distance}")
+        print(f"Bike Lane Priority: {priority_bike_path}")
+        print(f"Protected Bike Lane Priority: {priority_protected_bike_path}")
+        print(f"Slope Priority: {priority_minimize_slope}")
+
+        # Optional: Show destination in button
+        instance.text = self.text_input.text
+
+
+if __name__ == '__main__':
+    MyApp().run()
