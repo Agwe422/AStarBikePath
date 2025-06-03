@@ -93,8 +93,37 @@ dx_x, dx_y = dest_centroid.x, dest_centroid.y
 orig_node = ox.distance.nearest_nodes(G, ox_x, ox_y)
 dest_node = ox.distance.nearest_nodes(G, dx_x, dx_y)
 
-# 6. Compute shortest path by length using OSMnx’s built‑in function
-route = ox.shortest_path(G, orig_node, dest_node, weight="length")
+# --------------------
+# CHOOSE what the router should minimize
+#   "length"       → shortest physical distance (metres)
+#   "travel_time"  → fastest route using OSMnx‑calculated travel_time (seconds)
+#   "speed"        → minimise time by (length / speed_kph) when travel_time absent
+# --------------------
+WEIGHT_MODE = "length"        # change to "travel_time" or "speed" as needed
+
+
+def routing_weight(u: int, v: int, k: int, data: dict) -> float:
+    """Return the edge cost used by NetworkX shortest_path
+    depending on the global WEIGHT_MODE."""
+    if WEIGHT_MODE == "length":
+        # Already stored by OSMnx for every edge (metres)
+        return data.get("length", 0.0)
+
+    elif WEIGHT_MODE == "travel_time":
+        # Added above via ox.routing.add_edge_travel_times(G) (seconds)
+        return data.get("travel_time", data.get("length", 0.0))
+
+    elif WEIGHT_MODE == "speed":
+        # Approximate time = length / speed (length in m, speed in km/h)
+        speed_kph = data.get("speed_kph", 30.0)
+        # Convert km/h → m/s to avoid divide‑by‑zero
+        speed_mps = max(speed_kph * (1000 / 3600), 0.1)
+        return data.get("length", 0.0) / speed_mps
+
+    # default fallback
+    return data.get("length", 0.0)
+
+route = ox.shortest_path(G, orig_node, dest_node, weight=routing_weight)
 
 # 7. Plot the custom A* bike route and zoom to bounding box
 fig, ax = ox.plot_graph_route(
