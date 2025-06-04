@@ -6,23 +6,35 @@ from kivy.uix.button import Button
 from kivy.uix.textinput import TextInput
 from kivy.uix.image import Image
 from kivy.uix.floatlayout import FloatLayout
-from kivy.uix.widget import Widget
+from kivy.graphics import Color, Rectangle
+from kivy.uix.popup import Popup
 
+
+from backend import load_graph, run_routing
+
+# Global variables
+from_address = ""
+to_address = ""
+priority_time = None
+priority_distance = None
+priority_bike_path = None
+priority_protected_bike_path = None
+priority_road_prioirty = None
 
 class MyApp(App):
     def build(self):
+        self.graph = load_graph()
         self.options = [
-            "Speed",
-            "Reduce Distance",
-            "Find Bike Path",
-            "Find Protected Bike Path",
-            "Minimize Slope"
+            "Time",
+            "Distance",
+            "Find Bike Lane",
+            "Find Protected Bike Lane",
+            "Road Priority"
         ]
 
         self.selected = [None] * 5
         self.spinners = []
 
-        # Use FloatLayout to layer widgets
         root = FloatLayout()
 
         # Background image
@@ -33,27 +45,71 @@ class MyApp(App):
                          pos_hint={'x': 0, 'y': 0})
         root.add_widget(bg_image)
 
-        # Main layout on top
+        # Top label
+        top_label = Label(
+            text="A* For Biking",
+            size_hint=(1, None),
+            height=50,
+            pos_hint={'top': 1},
+            color=(1, 1, 1, 1),
+            bold=True,
+            font_size='20sp',
+        )
+
+        with top_label.canvas.before:
+            Color(0, 0, 0, 0.7)
+            self.rect = Rectangle(size=top_label.size, pos=top_label.pos)
+
+        def update_rect(instance, value):
+            self.rect.pos = instance.pos
+            self.rect.size = instance.size
+
+        top_label.bind(pos=update_rect, size=update_rect)
+        root.add_widget(top_label)
+
+        # Main layout
         main_layout = BoxLayout(orientation='vertical',
                                 spacing=10,
-                                padding=20,
+                                padding=(20, 80, 20, 20),
                                 size_hint=(1, 1),
                                 pos_hint={'x': 0, 'y': 0})
         root.add_widget(main_layout)
 
-        top_label = Label(text="A* For Biking", size_hint_y=None, height=40)
-        main_layout.add_widget(top_label)
-
         for i in range(5):
-            row = BoxLayout(orientation='horizontal', size_hint_y=None, height=40, spacing=10)
-            priority_label = Label(text=f"Priority {i+1}", size_hint_x=0.3)
+            row = BoxLayout(orientation='horizontal',
+                            size_hint_y=None,
+                            height=40,
+                            spacing=10)
+
+            priority_label = Label(text=f"Priority {i+1}",
+                                   size_hint_x=0.3,
+                                   halign='right',
+                                   valign='middle',
+                                   color=(0, 0, 0, 1),
+                                   font_size=30)
+            priority_label.bind(size=lambda instance, value: setattr(instance, 'text_size', value))
+
+            # White background behind label
+            with priority_label.canvas.before:
+                Color(1, 1, 1, 0.8)
+                bg_rect = Rectangle()
+
+            def make_update_rect(rect):
+                def update_bg(instance, value):
+                    # Align the background to match the text area only
+                    text_width, text_height = instance.texture_size
+                    label_x, label_y = instance.pos
+                    bg_rect.pos = (label_x, label_y)
+                    bg_rect.size = (text_width, text_height)
+
+                priority_label.bind(texture_size=update_bg, pos=update_bg)
 
             spinner = Spinner(
                 text="Select",
                 values=self.options[:],
-                size_hint_x=0.7
+                size_hint_x=0.2,
+                background_color=(0.2, 0.4, 0.8, 1)
             )
-
             spinner.index = i
             spinner.bind(text=self.on_spinner_select)
             self.spinners.append(spinner)
@@ -62,11 +118,19 @@ class MyApp(App):
             row.add_widget(spinner)
             main_layout.add_widget(row)
 
+        self.top_text_input = TextInput(
+            size_hint_y=None,
+            height=50,
+            multiline=False,
+            hint_text="ENTER STARTING POINT RIGHT HERE"
+        )
+        main_layout.add_widget(self.top_text_input)
+
         self.text_input = TextInput(
             size_hint_y=None,
             height=50,
             multiline=False,
-            hint_text="Type something here"
+            hint_text="ENTER DESTINATION RIGHT HERE"
         )
         main_layout.add_widget(self.text_input)
 
@@ -99,11 +163,91 @@ class MyApp(App):
             elif current:
                 spinner.text = current
 
+    def show_info(self, message):
+        popup = Popup(
+            title='Route Summary',
+            content=Label(text=message),
+            size_hint=(0.8, 0.4),
+            auto_dismiss=True
+        )
+        popup.open()
+
     def on_button_press(self, instance):
+        global from_address, to_address
+        global priority_time, priority_distance, priority_bike_path
+        global priority_protected_bike_path, priority_road_prioirty
+
+        from_address = self.top_text_input.text.strip()
+        to_address = self.text_input.text.strip()
+
+        # Remove unwanted characters
+        from_address = from_address.replace("\t", "").replace("\n", "")
+        to_address = to_address.replace("\t", "").replace("\n", "")
+
+        # Validate input
+        if not from_address or not to_address:
+            self.show_error("Please enter both a starting point and a destination.")
+            return
+
+            # Append city/state automatically
+        suffix = ", San Luis Obispo, CA"
+        from_address = from_address + suffix
+        to_address = to_address + suffix
+
+        print("From:", from_address)
+        print("To:", to_address)
         print("Selected priorities in order:")
         for i, choice in enumerate(self.selected, 1):
             print(f"Priority {i}: {choice}")
-        instance.text = self.text_input.text
+
+        priority_map = {
+            "Time": None,
+            "Distance": None,
+            "Find Bike Lane": None,
+            "Find Protected Bike Lane": None,
+            "Road Priority": None
+        }
+
+        for index, choice in enumerate(self.selected):
+            if choice:
+                priority_map[choice] = index + 1  # Priority level 1-5
+
+        priority_time = priority_map["Time"]
+        priority_distance = priority_map["Distance"]
+        priority_bike_path = priority_map["Find Bike Lane"]
+        priority_protected_bike_path = priority_map["Find Protected Bike Lane"]
+        priority_road_priority = priority_map["Road Priority"]
+
+        print("\nMapped Priorities:")
+        print("Time:", priority_time)
+        print("Distance:", priority_distance)
+        print("Bike Lane:", priority_bike_path)
+        print("Protected Bike Lane:", priority_protected_bike_path)
+        print("Road Priority:", priority_road_priority)
+
+        try:
+            summary = run_routing(from_address, to_address, priority_map)
+
+            message = (
+                f"Distance: {summary['distance_m']:.0f} meters\n"
+                f"Estimated Time: {summary['time_min']:.1f} minutes\n"
+                f"Bike Lane Segments: {summary['bike_lane_segments']}\n"
+                f"Protected Bike Segments: {summary['protected_segments']}\n\n"
+                "Directions:\n" + "\n".join(summary['directions'])
+            )
+            self.show_info(message)
+
+        except Exception as e:
+            self.show_error(f"Routing error: {str(e)}")
+
+    def show_error(self, message):
+        popup = Popup(
+            title='Error',
+            content=Label(text=message),
+            size_hint=(0.8, 0.3),
+            auto_dismiss=True
+        )
+        popup.open()
 
 
 if __name__ == '__main__':
