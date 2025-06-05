@@ -151,7 +151,7 @@ class MyApp(App):
             size_hint_y=None,
             height=50,
             multiline=False,
-            hint_text="ENTER STARTING POINT RIGHT HERE"
+            hint_text="ENTER STARTING ADDRESS HERE"
         )
         main_layout.add_widget(self.top_text_input)
 
@@ -159,7 +159,7 @@ class MyApp(App):
             size_hint_y=None,
             height=50,
             multiline=False,
-            hint_text="ENTER DESTINATION RIGHT HERE"
+            hint_text="ENTER DESTINATION ADDRESS HERE"
         )
         main_layout.add_widget(self.text_input)
 

@@ -220,10 +220,24 @@ def run_routing(from_address, to_address, priority_map):
 
     directions = get_route_directions(G, route)
 
+    # Calculate bounding box of route nodes (min/max x and y)
+    x_coords = [G.nodes[n]['x'] for n in route]
+    y_coords = [G.nodes[n]['y'] for n in route]
+
+    margin = 250  # margin to add around the route (in graph units, usually meters)
+
+    xmin, xmax = min(x_coords) - margin, max(x_coords) + margin
+    ymin, ymax = min(y_coords) - margin, max(y_coords) + margin
+
     fig, ax = ox.plot_graph_route(
         G, route, route_linewidth=4, node_size=0,
-        bgcolor="white"
+        bgcolor="white", show=False, close=False
     )
+
+    # Set the axis limits to zoom tightly around the route + margin
+    ax.set_xlim(xmin, xmax)
+    ax.set_ylim(ymin, ymax)
+
     ax.scatter([orig_pt.x], [orig_pt.y], c="red", s=100, label="Origin")
     ax.scatter([dest_pt.x], [dest_pt.y], c="blue", s=100, label="Destination")
     ax.legend()
