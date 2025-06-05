@@ -24,19 +24,32 @@ def load_graph():
         G = ox.graph_from_place("San Luis Obispo, California, USA", network_type="bike")
         G = ox.project_graph(G)
         ox.save_graphml(G, GRAPH_FILE)
-    G = ox.routing.add_edge_speeds(G)
-    G = ox.routing.add_edge_travel_times(G)
+    # G = ox.routing.add_edge_speeds(G)
+    # G = ox.routing.add_edge_travel_times(G)
+    # Set realistic bike travel times manually
+    BIKE_SPEED_M_S = 15 / 3.6  # 15 km/h in m/s ≈ 4.17
+
+    for u, v, k, data in G.edges(keys=True, data=True):
+        length = data.get("length", 0)
+        if length > 0:
+            data["travel_time"] = length / BIKE_SPEED_M_S
     _cached_graph = G
     return G
 
 def normalize_priorities(priority_map):
     inverse = {k: 1 / v for k, v in priority_map.items() if v is not None and v > 0}
+    if not inverse:
+        # Provide default: prioritize time
+        inverse = {"Time": 1}
     total = sum(inverse.values())
     return {k: v / total for k, v in inverse.items()}
+
 
 def edge_cost(u, v, data, weights, G):
     length = data.get("length", 0)
     ctype = data.get("cycleway") or data.get("cycleway:right") or data.get("highway", "")
+    has_lane = ctype in ["lane", "shared_lane", "opposite_lane"]
+    has_track = ctype == "track"
     if ctype == "track":
         c_pen = 0.1
     elif ctype == "lane":
@@ -63,8 +76,8 @@ def edge_cost(u, v, data, weights, G):
     cost = 0
     cost += weights.get("Distance", 0) * length
     cost += weights.get("Time", 0) * travel_time
-    cost += weights.get("Find Bike Lane", 0) * c_pen * length
-    cost += weights.get("Find Protected Bike Lane", 0) * (1.0 - (ctype == "track")) * length
+    cost += weights.get("Find Bike Lane", 0) * (1.0 - int(has_lane)) * length  # Reward lanes
+    cost += weights.get("Find Protected Bike Lane", 0) * (1.0 - int(has_track)) * length  # Reward tracks
     cost += weights.get("Road Priority", 0) * (speed_penalty + unpaved_penalty + 0.5 * sigs + 0.2 * stops)
 
     return cost
@@ -74,8 +87,14 @@ def get_route_directions(G, route):
     prev_street = None
 
     for u, v in zip(route[:-1], route[1:]):
-        edge_data = G.get_edge_data(u, v, 0)  # use the first edge if MultiDiGraph
-        street = edge_data.get('name', 'Unnamed Road')
+        edges = G.get_edge_data(u, v)
+        if not edges:
+            street = 'Unnamed Road'
+        else:
+            edge_key = next(iter(edges))
+            edge_data = edges[edge_key]
+            street = edge_data.get('name', 'Unnamed Road')
+
         if street != prev_street:
             directions.append(f"Continue on {street}")
             prev_street = street
@@ -134,12 +153,6 @@ def run_routing(from_address, to_address, priority_map):
     route = nx.shortest_path(G, orig_node, dest_node, weight=lambda u, v, data: edge_cost(u, v, data, weights, G))
     #route = ox.shortest_path(G, orig_node, dest_node, weight=weight_fn)
 
-    fig, ax = ox.plot_graph_route(G, route, route_linewidth=4, node_size=0, bgcolor="white")
-    ax.scatter([orig_pt.x], [orig_pt.y], c="red", s=100, label="Origin")
-    ax.scatter([dest_pt.x], [dest_pt.y], c="blue", s=100, label="Destination")
-    ax.legend()
-    plt.show()
-
     # Compute route summary
     total_distance = 0
     total_time = 0
@@ -147,16 +160,74 @@ def run_routing(from_address, to_address, priority_map):
     protected_segments = 0
 
     for u, v in zip(route[:-1], route[1:]):
-        data = min(G.get_edge_data(u, v).values(), key=lambda d: edge_cost(u, v, d, weights, G))
+        edges = G.get_edge_data(u, v)
+        if not edges:
+            continue
+        edge_key = next(iter(edges))
+        data = edges[edge_key]
+
         total_distance += data.get("length", 0)
         total_time += data.get("travel_time", 0)
-        cycleway = data.get("cycleway") or data.get("cycleway:right")
-        if cycleway in ["lane", "track", "shared_lane", "opposite_lane"]:
+
+        cycleway_tags = [
+            data.get("cycleway"),
+            data.get("cycleway:right"),
+            data.get("cycleway:left"),
+            data.get("cycleway:both")
+        ]
+        highway = data.get("highway", "")
+        bicycle = data.get("bicycle", "")
+
+        cycleway = next((v for v in cycleway_tags if v), None)
+
+        is_bike_lane = False
+        is_protected = False
+
+        if cycleway in ["lane", "track", "shared_lane", "opposite_lane"] or highway == "cycleway":
+            is_bike_lane = True
+        if cycleway == "track" or highway == "cycleway":
+            is_protected = True
+
+        if is_bike_lane:
             bike_lane_segments += 1
-        if cycleway == "track":
+        if is_protected:
             protected_segments += 1
 
+    # # Build color list for visualization
+    # edge_colors = []
+    # for u, v in zip(route[:-1], route[1:]):
+    #     edges = G.get_edge_data(u, v)
+    #     if not edges:
+    #         color = "gray"
+    #         continue
+    #     edge_key = next(iter(edges))
+    #     edge_data = edges[edge_key]
+    #
+    #     cycleway_tags = [
+    #         edge_data.get("cycleway"),
+    #         edge_data.get("cycleway:right"),
+    #         edge_data.get("cycleway:left"),
+    #         edge_data.get("cycleway:both")
+    #     ]
+    #     cycleway = next((tag for tag in cycleway_tags if tag), None)
+    #     if cycleway == "track":
+    #         color = "darkgreen"
+    #     elif cycleway in ["lane", "shared_lane", "opposite_lane"]:
+    #         color = "lightgreen"
+    #     else:
+    #         color = "gray"
+    #     edge_colors.append(color)
+
     directions = get_route_directions(G, route)
+
+    fig, ax = ox.plot_graph_route(
+        G, route, route_linewidth=4, node_size=0,
+        bgcolor="white"
+    )
+    ax.scatter([orig_pt.x], [orig_pt.y], c="red", s=100, label="Origin")
+    ax.scatter([dest_pt.x], [dest_pt.y], c="blue", s=100, label="Destination")
+    ax.legend()
+    plt.show()
 
     return {
         "distance_m": round(total_distance, 2),

@@ -9,6 +9,7 @@ from kivy.uix.floatlayout import FloatLayout
 from kivy.graphics import Color, Rectangle
 from kivy.uix.popup import Popup
 from kivy.uix.anchorlayout import AnchorLayout
+from kivy.uix.scrollview import ScrollView
 
 
 from backend import load_graph, run_routing
@@ -202,14 +203,6 @@ class MyApp(App):
             elif current:
                 spinner.text = current
 
-    def show_info(self, message):
-        popup = Popup(
-            title='Route Summary',
-            content=Label(text=message),
-            size_hint=(0.8, 0.4),
-            auto_dismiss=True
-        )
-        popup.open()
 
     def on_button_press(self, instance):
         global from_address, to_address
@@ -267,8 +260,9 @@ class MyApp(App):
         try:
             summary = run_routing(from_address, to_address, priority_map)
 
+            distance_mi = summary["distance_m"] * 0.000621371
             message = (
-                f"Distance: {summary['distance_m']:.0f} meters\n"
+                f"Distance: {distance_mi:.2f} miles\n"
                 f"Estimated Time: {summary['time_min']:.1f} minutes\n"
                 f"Bike Lane Segments: {summary['bike_lane_segments']}\n"
                 f"Protected Bike Segments: {summary['protected_segments']}\n\n"
@@ -284,6 +278,34 @@ class MyApp(App):
             title='Error',
             content=Label(text=message),
             size_hint=(0.8, 0.3),
+            auto_dismiss=True
+        )
+        popup.open()
+
+    def show_info(self, message):
+        layout = BoxLayout(orientation='vertical', padding=10)
+
+        # Create a scrollable label
+        scroll = ScrollView(size_hint=(1, 1))
+
+        label = Label(
+            text=message,
+            size_hint_y=None,
+            text_size=(self.root_window.width * 0.7, None),
+            halign='left',
+            valign='top'
+        )
+        label.bind(
+            texture_size=lambda instance, value: setattr(label, 'height', value[1])
+        )
+
+        scroll.add_widget(label)
+        layout.add_widget(scroll)
+
+        popup = Popup(
+            title='Route Summary',
+            content=layout,
+            size_hint=(0.9, 0.8),
             auto_dismiss=True
         )
         popup.open()
