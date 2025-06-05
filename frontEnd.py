@@ -8,6 +8,7 @@ from kivy.uix.image import Image
 from kivy.uix.floatlayout import FloatLayout
 from kivy.graphics import Color, Rectangle
 from kivy.uix.popup import Popup
+from kivy.uix.anchorlayout import AnchorLayout
 
 
 from backend import load_graph, run_routing
@@ -81,28 +82,54 @@ class MyApp(App):
                             height=40,
                             spacing=10)
 
-            priority_label = Label(text=f"Priority {i+1}",
-                                   size_hint_x=0.3,
-                                   halign='right',
-                                   valign='middle',
-                                   color=(0, 0, 0, 1),
-                                   font_size=30)
-            priority_label.bind(size=lambda instance, value: setattr(instance, 'text_size', value))
+            if i == 4:
+                # Add the Reset button for Priority 5
+                reset_button = Button(
+                    text="Reset",
+                    size_hint=(0.1, None),
+                    size=(70, 40),
+                    background_color=(1, 0.3, 0.3, 1)
+                )
+                reset_button.bind(on_press=self.reset_fields)
+                row.add_widget(reset_button)  # Just add button, not row again
+            else:
+                # For alignment, add an invisible spacer
+                row.add_widget(BoxLayout(size_hint_x=0.1))
 
-            # White background behind label
-            with priority_label.canvas.before:
-                Color(1, 1, 1, 0.8)
-                bg_rect = Rectangle()
+            # Wrapper layout to center the label
+            label_container = AnchorLayout(
+                anchor_x='right', anchor_y='center',
+                size_hint_x=0.4,  # keeps space for the label in the row
+                width = 120
+            )
 
-            def make_update_rect(rect):
+            priority_label = Label(
+                text=f"Priority {i + 1}",
+                size_hint=(None, None),  # text only
+                color=(0, 0, 0, 1),
+                font_size=28
+            )
+
+            priority_label.bind(
+                texture_size=lambda instance, value: setattr(instance, 'size', value)
+            )
+
+            # Create white background (this needs its own scope!)
+            def add_background(label):
+                with label.canvas.before:
+                    Color(1, 1, 1, 0.8)
+                    bg = Rectangle()
+
                 def update_bg(instance, value):
-                    # Align the background to match the text area only
-                    text_width, text_height = instance.texture_size
-                    label_x, label_y = instance.pos
-                    bg_rect.pos = (label_x, label_y)
-                    bg_rect.size = (text_width, text_height)
+                    bg.pos = instance.pos
+                    bg.size = instance.size
 
-                priority_label.bind(texture_size=update_bg, pos=update_bg)
+                label.bind(pos=update_bg, size=update_bg)
+
+            add_background(priority_label)
+
+            label_container.add_widget(priority_label)
+            row.add_widget(label_container)
 
             spinner = Spinner(
                 text="Select",
@@ -114,8 +141,9 @@ class MyApp(App):
             spinner.bind(text=self.on_spinner_select)
             self.spinners.append(spinner)
 
-            row.add_widget(priority_label)
+            #row.add_widget(priority_label)
             row.add_widget(spinner)
+            # Only add the row once, regardless of index
             main_layout.add_widget(row)
 
         self.top_text_input = TextInput(
@@ -143,6 +171,17 @@ class MyApp(App):
         main_layout.add_widget(self.button)
 
         return root
+
+    def reset_fields(self, instance):
+        # Clear address inputs
+        self.top_text_input.text = ""
+        self.text_input.text = ""
+
+        # Reset all spinners
+        self.selected = [None] * 5
+        for spinner in self.spinners:
+            spinner.text = "Select"
+            spinner.values = self.options[:]  # restore all options
 
     def on_spinner_select(self, spinner, text):
         index = spinner.index
