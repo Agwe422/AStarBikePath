@@ -44,12 +44,40 @@ def normalize_priorities(priority_map):
     total = sum(inverse.values())
     return {k: v / total for k, v in inverse.items()}
 
+def linear_priority_weights(priority_map):
+    if not any(v for v in priority_map.values() if v):  # all None or 0
+        priority_map = {"Time": 1}
+
+    weights = {}
+    for k, v in priority_map.items():
+        weights[k] = 2 ** (6 - v) if v else 0  # exponential scaling
+    return weights
+
 
 def edge_cost(u, v, data, weights, G):
     length = data.get("length", 0)
     ctype = data.get("cycleway") or data.get("cycleway:right") or data.get("highway", "")
-    has_lane = ctype in ["lane", "shared_lane", "opposite_lane"]
-    has_track = ctype == "track"
+
+    cycleway_tags = [
+        data.get("cycleway"),
+        data.get("cycleway:right"),
+        data.get("cycleway:left"),
+        data.get("cycleway:both")
+    ]
+    has_lane = any(tag in ["lane", "shared_lane", "opposite_lane"] for tag in cycleway_tags if tag)
+    has_track = any(tag == "track" for tag in cycleway_tags if tag)
+
+    if has_lane or has_track:
+        print(
+            f"Edge {u}-{v} has_lane={has_lane} has_track={has_track} cycleway_tags={cycleway_tags} highway={data.get('highway')}")
+
+    # Add highway=cycleway as an override
+    if data.get("highway") == "cycleway":
+        has_lane = True
+        has_track = True
+
+    # has_lane = ctype in ["lane", "shared_lane", "opposite_lane"]
+    # has_track = ctype == "track"
     if ctype == "track":
         c_pen = 0.1
     elif ctype == "lane":
@@ -74,13 +102,80 @@ def edge_cost(u, v, data, weights, G):
     travel_time = data.get("travel_time", length / 5)
 
     cost = 0
-    cost += weights.get("Distance", 0) * length
-    cost += weights.get("Time", 0) * travel_time
-    cost += weights.get("Find Bike Lane", 0) * (1.0 - int(has_lane)) * length  # Reward lanes
-    cost += weights.get("Find Protected Bike Lane", 0) * (1.0 - int(has_track)) * length  # Reward tracks
-    cost += weights.get("Road Priority", 0) * (speed_penalty + unpaved_penalty + 0.5 * sigs + 0.2 * stops)
 
-    return cost
+    #second implementation
+    # # Scale distance and time to match typical segment lengths
+    # scaled_length = length / 100.0  # Normalize ~100m segments
+    # scaled_time = travel_time / 60.0  # Normalize ~1 min segments
+    #
+    # # Add penalties
+    # no_lane_penalty = (1.0 - int(has_lane))
+    # no_track_penalty = (1.0 - int(has_track))
+    # road_penalty = speed_penalty + unpaved_penalty + 0.5 * sigs + 0.2 * stops
+    #
+    # cost += weights.get("Distance", 0) * scaled_length
+    # cost += weights.get("Time", 0) * scaled_time
+    # cost += weights.get("Find Bike Lane", 0) * no_lane_penalty
+    # cost += weights.get("Find Protected Bike Lane", 0) * no_track_penalty
+    # cost += weights.get("Road Priority", 0) * road_penalty
+
+    #first implementation
+    # cost += weights.get("Distance", 0) * length
+    # cost += weights.get("Time", 0) * travel_time
+    # cost += weights.get("Find Bike Lane", 0) * (1.0 - int(has_lane)) * length *1000 # Reward lanes
+    # cost += weights.get("Find Protected Bike Lane", 0) * (1.0 - int(has_track)) * length  *2000# Reward tracks
+    # cost += weights.get("Road Priority", 0) * (speed_penalty + unpaved_penalty + 0.5 * sigs + 0.2 * stops)
+
+    #third implementation
+    reward_lane = int(has_lane) * weights.get("Find Bike Lane", 0) * 500  # fixed reward
+    reward_track = int(has_track) * weights.get("Find Protected Bike Lane", 0) * 1000  # bigger reward
+
+    cost = (
+            weights.get("Distance", 0) * length
+            + weights.get("Time", 0) * travel_time
+            + weights.get("Road Priority", 0) * (speed_penalty + unpaved_penalty + 0.5 * sigs + 0.2 * stops)
+            - reward_lane
+            - reward_track
+    )
+
+    if cost < 0:
+        print(f"Warning: Negative cost for edge {u}-{v}: {cost}")
+
+    final_cost = max(
+        cost,
+        0.001  # avoid zero or negative costs
+    )
+    return final_cost
+
+
+def summarize_bike_infra(G):
+    total_edges = 0
+    bike_lane_edges = 0
+    protected_lane_edges = 0
+    for u, v, k, data in G.edges(keys=True, data=True):
+        total_edges += 1
+
+        # Combine all cycleway tags
+        cycleway_tags = [
+            data.get("cycleway"),
+            data.get("cycleway:right"),
+            data.get("cycleway:left"),
+            data.get("cycleway:both")
+        ]
+        highway = data.get("highway", "")
+        bicycle = data.get("bicycle", "")
+
+        if any(tag in ["lane", "shared_lane", "opposite_lane"] for tag in cycleway_tags if tag) or highway == "cycleway":
+            bike_lane_edges += 1
+
+        if any(tag == "track" for tag in cycleway_tags if tag) or highway == "cycleway":
+            protected_lane_edges += 1
+
+    print(f"\n=== Bike Infra Summary ===")
+    print(f"Total edges: {total_edges}")
+    print(f"Bike lane edges: {bike_lane_edges}")
+    print(f"Protected lane edges: {protected_lane_edges}")
+
 
 def get_route_directions(G, route):
     directions = []
@@ -103,10 +198,12 @@ def get_route_directions(G, route):
 
 def run_routing(from_address, to_address, priority_map):
     print(f"Routing from: {from_address} to {to_address}")
-    weights = normalize_priorities(priority_map)
+    #weights = normalize_priorities(priority_map)
+    weights = linear_priority_weights(priority_map)
     print("Normalized weights:", weights)
 
     G = load_graph()  # Load or build graph once per run
+    summarize_bike_infra(G)
 
     try:
         orig_coords = ox.geocode(from_address)
@@ -150,8 +247,20 @@ def run_routing(from_address, to_address, priority_map):
     def weight_fn(u: int, v: int, k: int, data: dict) -> float:
         return edge_cost(u, v, data, weights, G)
 
-    route = nx.shortest_path(G, orig_node, dest_node, weight=lambda u, v, data: edge_cost(u, v, data, weights, G))
+    def heuristic_fn(u, v):
+        x1, y1 = G.nodes[u]['x'], G.nodes[u]['y']
+        x2, y2 = G.nodes[v]['x'], G.nodes[v]['y']
+        euclidean = ((x1 - x2) ** 2 + (y1 - y2) ** 2) ** 0.5
+        return euclidean * 0.1  # assuming average cost ~0.1 per meter
+
+    # astar algorithm
+    route = nx.astar_path(G, orig_node, dest_node, heuristic=heuristic_fn, weight=lambda u, v, data: edge_cost(u, v, data, weights, G))
+    #djikstras algorithm
+    #route = nx.shortest_path(G, orig_node, dest_node, weight=lambda u, v, data: edge_cost(u, v, data, weights, G))
     #route = ox.shortest_path(G, orig_node, dest_node, weight=weight_fn)
+
+    print("Input priority map:", priority_map)
+    print("Computed weights:", weights)
 
     # Compute route summary
     total_distance = 0
